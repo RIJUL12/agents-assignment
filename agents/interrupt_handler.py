@@ -1,81 +1,99 @@
 import asyncio
 import re
-from typing import Callable
-
-DEFAULT_IGNORE_WORDS = {
-    "yeah", "ok", "okay", "hmm", "uh", "uh-huh", "mm-hmm", "right"
-}
-
-DEFAULT_INTERRUPT_WORDS = {
-    "stop", "wait", "no", "cancel", "hold on"
-}
+from typing import Callable, Optional
 
 
 class IntelligentInterruptHandler:
+
+    DEFAULT_IGNORE_WORDS = {
+        "yeah",
+        "ok",
+        "okay",
+        "hmm",
+        "uh",
+        "uhh",
+        "uh-huh",
+        "mm-hmm",
+        "right",
+    }
+
+    DEFAULT_INTERRUPT_WORDS = {
+        "stop",
+        "wait",
+        "no",
+        "cancel",
+        "hold on",
+    }
+
     def __init__(
         self,
         *,
         is_agent_speaking: Callable[[], bool],
-        resume_audio: Callable[[], None],
         stop_audio: Callable[[], None],
-        ignore_words=None,
-        interrupt_words=None,
+        continue_audio: Callable[[], None],
         decision_delay_ms: int = 150,
+        ignore_words: Optional[set] = None,
+        interrupt_words: Optional[set] = None,
     ):
         self.is_agent_speaking = is_agent_speaking
-        self.resume_audio = resume_audio
         self.stop_audio = stop_audio
+        self.continue_audio = continue_audio
 
-        self.ignore_words = ignore_words or DEFAULT_IGNORE_WORDS
-        self.interrupt_words = interrupt_words or DEFAULT_INTERRUPT_WORDS
+        self.ignore_words = ignore_words or self.DEFAULT_IGNORE_WORDS
+        self.interrupt_words = interrupt_words or self.DEFAULT_INTERRUPT_WORDS
 
         self.decision_delay_ms = decision_delay_ms
-        self._pending_task = None
 
-    def normalize(self, text: str) -> str:
-        return re.sub(r"[^\w\s]", "", text.lower()).strip()
+    def _normalize(self, text: str) -> str:
+        text = text.lower()
+        text = re.sub(r"[^\w\s]", "", text)
+        return text.strip()
 
-    def contains_interrupt(self, text: str) -> bool:
-        for word in self.interrupt_words:
-            if word in text:
-                return True
-        return False
+    def _contains_interrupt(self, text: str) -> bool:
+        return any(word in text for word in self.interrupt_words)
 
-    def is_only_backchannel(self, text: str) -> bool:
+    def _is_only_backchannel(self, text: str) -> bool:
         words = text.split()
         return all(word in self.ignore_words for word in words)
 
-    async def handle_user_transcript(self, text: str):
-        normalized = self.normalize(text)
+    # logic code ka #
+
+    async def handle_stt_result(self, text: str):
+        normalized = self._normalize(text)
+
+        print(f"[STT] '{normalized}'")
 
         if not self.is_agent_speaking():
+            print("[DECISION] agent silent → respond normally")
             return "respond"
 
-        if self.contains_interrupt(normalized):
+        if self._contains_interrupt(normalized):
+            print("[DECISION] interrupt detected → stopping agent")
             self.stop_audio()
             return "interrupt"
 
-        if self.is_only_backchannel(normalized):
-            self.resume_audio()
+        if self._is_only_backchannel(normalized):
+            print("[DECISION] backchannel detected → ignoring")
+            self.continue_audio()
             return "ignore"
-
+        print("[DECISION] non-filler speech → stopping agent")
         self.stop_audio()
         return "interrupt"
 
-    def on_vad_interrupt(self, transcript_future: asyncio.Future):
+    def on_vad_detected(self, stt_future: asyncio.Future):
+
         if not self.is_agent_speaking():
             return
 
-        async def decision():
+        async def decision_task():
             try:
                 text = await asyncio.wait_for(
-                    transcript_future,
+                    stt_future,
                     timeout=self.decision_delay_ms / 1000,
                 )
-                await self.handle_user_transcript(text)
+                await self.handle_stt_result(text)
             except asyncio.TimeoutError:
-                # Safety fallback: interrupt
+                print("[DECISION] STT timeout → stopping agent (safety)")
                 self.stop_audio()
 
-        self._pending_task = asyncio.create_task(decision())
-
+        asyncio.create_task(decision_task())
