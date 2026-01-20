@@ -1,5 +1,5 @@
 import asyncio
-from agents.interrupt_handler import IntelligentInterruptHandler
+from interrupt_handler import IntelligentInterruptHandler
 
 
 class FakeAgent:
