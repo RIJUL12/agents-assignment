@@ -12,9 +12,6 @@ DEFAULT_INTERRUPT_WORDS = {
 
 
 class IntelligentInterruptHandler:
-    """
-    Handles intelligent interruption filtering on top of LiveKit VAD.
-    """
 
     def __init__(
         self,
@@ -50,16 +47,10 @@ class IntelligentInterruptHandler:
         return all(word in self.ignore_words for word in words)
 
     async def handle_user_transcript(self, text: str):
-        """
-        Called when STT result arrives.
-        """
         normalized = self.normalize(text)
-
-        # Agent not speaking → normal behavior
         if not self.is_agent_speaking():
             return "respond"
 
-        # Agent speaking → semantic decision
         if self.contains_interrupt(normalized):
             self.stop_audio()
             return "interrupt"
@@ -68,15 +59,10 @@ class IntelligentInterruptHandler:
             self.resume_audio()
             return "ignore"
 
-        # Anything else counts as an interruption
         self.stop_audio()
         return "interrupt"
 
     def on_vad_interrupt(self, transcript_future: asyncio.Future):
-        """
-        Called immediately when VAD fires.
-        We delay decision until STT text arrives.
-        """
         if not self.is_agent_speaking():
             return
 
@@ -88,7 +74,6 @@ class IntelligentInterruptHandler:
                 )
                 await self.handle_user_transcript(text)
             except asyncio.TimeoutError:
-                # Safety fallback: interrupt
                 self.stop_audio()
 
         self._pending_task = asyncio.create_task(decision())
